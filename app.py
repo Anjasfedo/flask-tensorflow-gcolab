@@ -1,14 +1,40 @@
-import os
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, Response
 from flask_cors import CORS
+import tensorflow as tf
+import numpy as np
+import cv2
 import io
-from model_load import model
+from pathlib import Path
+from tensorflow.lite.python.interpreter import Interpreter
 
-# Set the environment variable to disable oneDNN optimizations
+# Disable oneDNN optimizations
+import os
 os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
 
 app = Flask(__name__)
 CORS(app)
+
+# Use pathlib to define paths
+model_dir = Path("model")
+tflite_model_path = model_dir / "detect.tflite"
+label_map_path = model_dir / "labelmap.txt"
+
+# Load the TFLite model into memory
+interpreter = Interpreter(model_path=str(tflite_model_path))
+interpreter.allocate_tensors()
+
+# Get model details
+input_details = interpreter.get_input_details()
+output_details = interpreter.get_output_details()
+height = input_details[0]['shape'][1]
+width = input_details[0]['shape'][2]
+float_input = (input_details[0]['dtype'] == np.float32)
+input_mean = 127.5
+input_std = 127.5
+
+# Load label map into memory
+with label_map_path.open('r') as f:
+    labels = [line.strip() for line in f.readlines()]
 
 @app.route('/predict', methods=['POST'])
 def predict_image():
@@ -16,15 +42,43 @@ def predict_image():
         if 'image' not in request.files:
             return jsonify({'error': 'Image data not found'}), 400
 
-        image_data = request.files['image'] # The uploaded image
+        image_data = request.files['image']
+        image_file = io.BytesIO(image_data.read())
+        image = cv2.imdecode(np.frombuffer(image_file.read(), np.uint8), cv2.IMREAD_COLOR)
 
-        image_file = io.BytesIO(image_data.read()) # Process this image
+        # Preprocess the image
+        image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        imH, imW, _ = image.shape
+        image_resized = cv2.resize(image_rgb, (width, height))
+        input_data = np.expand_dims(image_resized, axis=0)
 
-        print(model.summary()) # Show model summary, indicate the model load successfuly
-        
-        # Handle image preprocessing same as ipynb does, then do predict and return it
+        if float_input:
+            input_data = (np.float32(input_data) - input_mean) / input_std
 
-        return jsonify({'result': 'lorem'}), 200
+        # Run inference
+        interpreter.set_tensor(input_details[0]['index'], input_data)
+        interpreter.invoke()
+
+        # Retrieve detection results
+        boxes = interpreter.get_tensor(output_details[1]['index'])[0]
+        classes = interpreter.get_tensor(output_details[3]['index'])[0]
+        scores = interpreter.get_tensor(output_details[0]['index'])[0]
+
+        min_conf = 0.5  # Minimum confidence threshold for displaying results
+
+        detections = []
+
+        for i in range(len(scores)):
+            if (scores[i] > min_conf) and (scores[i] <= 1.0):
+                object_name = labels[int(classes[i])]
+                confidence = scores[i] * 100  # Convert score to percentage
+
+                detections.append({
+                    'label': object_name,
+                    'confidence': confidence
+                })
+
+        return jsonify({'detections': detections}), 200
 
     except Exception as e:
         return jsonify({'error': str(e)}), 400

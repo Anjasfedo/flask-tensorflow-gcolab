@@ -4,11 +4,9 @@ import tensorflow as tf
 # Define the directory where the model is stored
 model_dir = "model"
 
-# Define the filename of the model
-model_filename = "model.h5"
+# Load the TensorFlow SavedModel from the specified directory
+model = tf.saved_model.load(export_dir=model_dir)
 
-# Construct the full path to the model file by joining the directory and filename
-model_path = os.path.join(model_dir, model_filename)
-
-# Load the TensorFlow Keras model from the specified file path
-model = tf.keras.models.load_model(model_path)
+# Print the model details to verify it's loaded
+print("Model loaded successfully.")
+print(model)
