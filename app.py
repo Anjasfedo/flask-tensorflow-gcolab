@@ -66,19 +66,31 @@ def predict_image():
 
         min_conf = 0.5  # Minimum confidence threshold for displaying results
 
-        detections = []
-
         for i in range(len(scores)):
             if (scores[i] > min_conf) and (scores[i] <= 1.0):
+                ymin = int(max(1, (boxes[i][0] * imH)))
+                xmin = int(max(1, (boxes[i][1] * imW)))
+                ymax = int(min(imH, (boxes[i][2] * imH)))
+                xmax = int(min(imW, (boxes[i][3] * imW)))
                 object_name = labels[int(classes[i])]
-                confidence = scores[i] * 100  # Convert score to percentage
+                confidence = scores[i]
 
-                detections.append({
-                    'label': object_name,
-                    'confidence': confidence
-                })
+                # Draw bounding box
+                cv2.rectangle(image, (xmin, ymin), (xmax, ymax), (10, 255, 0), 2)
+                label = f'{object_name}: {int(confidence * 100)}%'
+                labelSize, baseLine = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)
+                label_ymin = max(ymin, labelSize[1] + 10)
+                cv2.rectangle(image, (xmin, label_ymin - labelSize[1] - 10), (xmin + labelSize[0], label_ymin + baseLine - 10), (255, 255, 255), cv2.FILLED)
+                cv2.putText(image, label, (xmin, label_ymin - 7), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 2)
 
-        return jsonify({'detections': detections}), 200
+        # Convert the image to bytes
+        _, buffer = cv2.imencode('.jpg', image)
+        image_bytes = buffer.tobytes()
+        image_io = io.BytesIO(image_bytes)
+
+        return Response(image_io.getvalue(), mimetype='image/jpeg', headers={
+            'Content-Disposition': 'attachment; filename=predicted_image.jpg'
+        })
 
     except Exception as e:
         return jsonify({'error': str(e)}), 400
